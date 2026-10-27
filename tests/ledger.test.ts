@@ -19,6 +19,7 @@ beforeAll(async () => {
 afterAll(async () => {
   if (createdIds.length) {
     await pool.query('DELETE FROM transactions WHERE account_id = ANY($1::uuid[])', [createdIds]);
+    await pool.query('DELETE FROM transfers WHERE source_account_id = ANY($1::uuid[]) OR destination_account_id = ANY($1::uuid[])', [createdIds]);
     await pool.query('DELETE FROM accounts WHERE id = ANY($1::uuid[])', [createdIds]);
   }
   await pool.end();
@@ -252,6 +253,82 @@ describe('transaction history', () => {
       expect((await request(app).get(`/accounts/${id}/transactions`)).body.pagination.total_records).toBe(2);
     } finally {
       await historyPool.end();
+    }
+  });
+});
+
+
+function transferBody(source_account_id: string, destination_account_id: string, amount: string, reference_id: string) {
+  return { source_account_id, destination_account_id, amount, description: 'Transfer', reference_id };
+}
+function transferRequest(body: object) { return request(app).post('/transfers').send(body); }
+
+describe('transfers', () => {
+  it('moves funds with linked entries and preserves both ledger sums', async () => {
+    const source = await account(), destination = await account();
+    expect((await post(source, entry('credit', '100', 'initial'))).status).toBe(201);
+    const response = await transferRequest(transferBody(source, destination, '30', 'transfer'));
+    expect(response.status).toBe(201);
+    expect(response.body.id).toMatch(/^[0-9a-f-]{36}$/i);
+    expect(response.body.debit).toMatchObject({ account_id: source, type: 'debit', amount: '30.00', reference_id: 'transfer' });
+    expect(response.body.credit).toMatchObject({ account_id: destination, type: 'credit', amount: '30.00', reference_id: 'transfer' });
+    const linked = await pool.query('SELECT transfer_id FROM transactions WHERE id = ANY($1::uuid[])', [[response.body.debit.id, response.body.credit.id]]);
+    expect(linked.rows).toEqual([{ transfer_id: response.body.id }, { transfer_id: response.body.id }]);
+    await expectLedgerBalance(source, '70.00');
+    await expectLedgerBalance(destination, '30.00');
+  });
+
+  it('rejects missing accounts, same account, invalid input and insufficient funds', async () => {
+    const source = await account(), destination = await account(), missing = randomUUID();
+    expect((await transferRequest(transferBody(missing, destination, '1', 'a'))).status).toBe(404);
+    expect((await transferRequest(transferBody(source, missing, '1', 'b'))).status).toBe(404);
+    expect((await transferRequest(transferBody(source, source, '1', 'c'))).status).toBe(400);
+    expect((await transferRequest(transferBody(source, destination, '0.001', 'd'))).status).toBe(400);
+    expect((await transferRequest(transferBody(source, destination, '1', 'e'))).body.error.code).toBe('INSUFFICIENT_FUNDS');
+    await expectLedgerBalance(source, '0.00');
+    await expectLedgerBalance(destination, '0.00');
+  });
+
+  it('rejects duplicate references on either account and destination overflow', async () => {
+    const source = await account(), destination = await account();
+    expect((await post(source, entry('credit', '10', 'source-ref'))).status).toBe(201);
+    expect((await post(destination, entry('credit', '90071992547409.91', 'destination-ref'))).status).toBe(201);
+    for (const ref of ['source-ref', 'destination-ref']) {
+      const response = await transferRequest(transferBody(source, destination, '1', ref));
+      expect(response.status).toBe(409);
+      expect(response.body.error.code).toBe('DUPLICATE_REFERENCE');
+    }
+    expect((await transferRequest(transferBody(source, destination, '1', 'overflow'))).status).toBe(400);
+    await expectLedgerBalance(source, '10.00');
+    await expectLedgerBalance(destination, '90071992547409.91');
+  });
+
+  it('completes opposite-direction transfers without deadlock', async () => {
+    const a = await account(), b = await account();
+    expect((await post(a, entry('credit', '100', 'a'))).status).toBe(201);
+    expect((await post(b, entry('credit', '100', 'b'))).status).toBe(201);
+    const results = await Promise.all([transferRequest(transferBody(a, b, '30', 'ab')), transferRequest(transferBody(b, a, '40', 'ba'))]);
+    expect(results.map((r) => r.status)).toEqual([201, 201]);
+    await expectLedgerBalance(a, '110.00');
+    await expectLedgerBalance(b, '90.00');
+  });
+
+  it('rolls back both balances and entries when the second insert fails', async () => {
+    const source = await account(), destination = await account();
+    expect((await post(source, entry('credit', '10', 'initial'))).status).toBe(201);
+    const reference = randomUUID();
+    const client = await pool.connect();
+    try {
+      await client.query(`CREATE FUNCTION pg_temp.fail_transfer_credit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected failure'; END $$`);
+      await client.query(`CREATE TRIGGER fail_transfer_credit BEFORE INSERT ON transactions FOR EACH ROW WHEN (NEW.reference_id = '${reference}' AND NEW.type = 'credit') EXECUTE FUNCTION pg_temp.fail_transfer_credit()`);
+      expect((await transferRequest(transferBody(source, destination, '5', reference))).status).toBe(500);
+      await expectLedgerBalance(source, '10.00');
+      await expectLedgerBalance(destination, '0.00');
+      expect((await pool.query('SELECT id FROM transactions WHERE reference_id = $1', [reference])).rowCount).toBe(0);
+      expect((await pool.query('SELECT id FROM transfers WHERE reference_id = $1', [reference])).rowCount).toBe(0);
+    } finally {
+      await client.query('DROP TRIGGER IF EXISTS fail_transfer_credit ON transactions');
+      client.release();
     }
   });
 });

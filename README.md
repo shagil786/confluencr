@@ -1,6 +1,6 @@
 # Transaction Ledger API
 
-A local Node.js and PostgreSQL ledger with accounts, credit/debit transactions, and paginated history. Transfer work is in progress and is not part of the verified core. See [API documentation](docs/api.md) for requests, responses, and assumptions.
+A local Node.js and PostgreSQL ledger with accounts, credit/debit transactions, paginated history, and atomic transfers. See [API documentation](docs/api.md) for requests, responses, and assumptions.
 
 ## Requirements
 
@@ -26,7 +26,7 @@ npm run build
 npm start
 ```
 
-The server reads `.env` and listens on port 3000 by default. The schema creates missing objects but does not upgrade incompatible existing definitions. Omit `createdb` if the dedicated test database already exists.
+The server reads `.env` and listens on port 3000 by default. The schema adds the transfer table and link column to databases created by the earlier schema without removing existing data; other incompatible schema changes require a migration. Omit `createdb` if the dedicated test database already exists.
 
 ## Test
 
@@ -58,6 +58,6 @@ The balance is `100.00` and history contains the credit. Python 3 is needed to e
 
 ## Design and limits
 
-Amounts are decimal strings converted to integer minor units without rounding. Each account row is locked while posting; balance changes and entries commit or roll back together. History uses a repeatable-read snapshot for its count and page. Offset pagination can shift between requests, and equal timestamps are ordered by ID rather than commit order.
+Amounts are decimal strings converted to integer minor units without rounding. Each account row is locked while posting; balance changes and entries commit or roll back together. Transfers lock both accounts in ID order and commit both entries and balances together. History uses a repeatable-read snapshot for its count and page. Offset pagination can shift between requests, and equal timestamps are ordered by ID rather than commit order.
 
 This is an assessment service for local synthetic data. It has no authentication or tenant isolation; do not expose it publicly or use real customer data. It does not provide production banking, external settlement, fees, currency conversion, or overdrafts.

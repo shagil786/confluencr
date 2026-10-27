@@ -33,7 +33,13 @@ Balance example: `{"account_id":"<uuid>","balance":"100.00"}`. History example: 
 
 ## Transfer bonus
 
-Transfer work is in progress and is not part of the verified core API.
+Create a second account and save its ID as `DESTINATION`, then:
+
+```sh
+curl -sS -X POST http://localhost:3000/transfers -H 'Content-Type: application/json' -d "{\"source_account_id\":\"$SOURCE\",\"destination_account_id\":\"$DESTINATION\",\"amount\":\"30.00\",\"description\":\"Transfer\",\"reference_id\":\"transfer-1\"}"
+```
+
+201 returns `{"id":"<transfer uuid>","debit":{...},"credit":{...}}`; each entry has the same fields as a posted transaction. Accounts must differ and the reference must be unused on both accounts. Both entries and balances commit together or none do. This bonus does not perform external settlement.
 
 ## Errors
 

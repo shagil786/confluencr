@@ -16,3 +16,13 @@ CREATE TABLE IF NOT EXISTS transactions (
   UNIQUE (account_id, reference_id)
 );
 CREATE INDEX IF NOT EXISTS transactions_account_history_idx ON transactions (account_id, created_at DESC, id DESC);
+
+CREATE TABLE IF NOT EXISTS transfers (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  source_account_id uuid NOT NULL REFERENCES accounts(id),
+  destination_account_id uuid NOT NULL REFERENCES accounts(id),
+  reference_id text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (source_account_id <> destination_account_id)
+);
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS transfer_id uuid REFERENCES transfers(id);
