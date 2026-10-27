@@ -10,7 +10,7 @@ Amounts must be positive decimal strings with at most two fractional digits; no 
 curl -sS -X POST http://localhost:3000/accounts -H 'Content-Type: application/json' -d '{"name":"Asha"}'
 ```
 
-201 example: `{"id":"<uuid>","name":"Asha","balance":"0.00","created_at":"<timestamp>"}`. Repeat for a second account and save the IDs as `SOURCE` and `DESTINATION` in your shell.
+201 example: `{"id":"<uuid>","name":"Asha","balance":"0.00","created_at":"<timestamp>"}`. Save the returned ID as `SOURCE` in your shell.
 
 ## Post a transaction
 
@@ -31,14 +31,12 @@ Balance example: `{"account_id":"<uuid>","balance":"100.00"}`. History example: 
 
 `type` is optional; `page` defaults to 1 and `limit` defaults to 20 (maximum 100). Empty results have zero total pages. Records sort by `created_at` descending, then ID descending for ties. Timestamps are transaction start times, not commit order; offset pages may shift between requests.
 
-## Transfer
+## Transfer bonus
 
-```sh
-curl -sS -X POST http://localhost:3000/transfers -H 'Content-Type: application/json' -d "{\"source_account_id\":\"$SOURCE\",\"destination_account_id\":\"$DESTINATION\",\"amount\":\"30.00\",\"description\":\"Transfer\",\"reference_id\":\"transfer-1\"}"
-```
-
-201 returns `{"id":"<transfer uuid>","debit":{...},"credit":{...}}`; each entry has the same fields as a posted transaction. Accounts must differ. The reference must be unused on both accounts. Both entries and balances commit together or none do. This bonus feature does not perform external settlement.
+Transfer work is in progress and is not part of the verified core API.
 
 ## Errors
 
 Errors have the form `{"error":{"code":"VALIDATION_ERROR","message":"Invalid request"}}`. Malformed input or IDs and balance overflow return 400; a missing account returns 404 `ACCOUNT_NOT_FOUND`; insufficient funds and duplicate references return 409 `INSUFFICIENT_FUNDS` or `DUPLICATE_REFERENCE`. Oversized JSON returns 413, unsupported encoding 415, and unexpected failures return 500 `INTERNAL_ERROR` without database details.
+
+Unmatched routes use Express's default 404 response. The service has no authentication, authorization, tenant isolation, or rate limiting; use synthetic data locally only. Direct database writes bypass API validation and immutability.
