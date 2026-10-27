@@ -7,8 +7,10 @@ const maxMinor = 9007199254740991n;
 const transactionSchema = z.object({
   type: z.enum(['credit', 'debit']),
   amount: z.string().refine((value) => {
-    if (value.length > 17 || !/^\d+(?:\.\d{1,2})?$/.test(value)) return false;
-    const [whole, fraction = ''] = value.split('.');
+    if (!/^\d+(?:\.\d{1,2})?$/.test(value)) return false;
+    const [rawWhole, fraction = ''] = value.split('.');
+    const whole = rawWhole.replace(/^0+/, '') || '0';
+    if (whole.length > 14) return false;
     const minor = BigInt(whole) * 100n + BigInt(fraction.padEnd(2, '0'));
     return minor > 0n && minor <= maxMinor;
   }),
@@ -29,7 +31,8 @@ export interface Transaction {
 
 export async function postTransaction(pool: Pool, accountId: string, input: TransactionInput): Promise<Transaction> {
   const { type, amount, description, reference_id } = transactionSchema.parse(input);
-  const [whole, fraction = ''] = amount.split('.');
+  const [rawWhole, fraction = ''] = amount.split('.');
+  const whole = rawWhole.replace(/^0+/, '') || '0';
   const minor = BigInt(whole) * 100n + BigInt(fraction.padEnd(2, '0'));
   const client = await pool.connect();
   try {

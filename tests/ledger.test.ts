@@ -115,6 +115,34 @@ describe('transaction posting', () => {
     await expectLedgerBalance(other, '10.00');
   });
 
+  it('accepts amounts with leading zeros', async () => {
+    const id = await account();
+    expect((await post(id, entry('credit', '0000000000000001.00', 'zeros'))).status).toBe(201);
+    await expectLedgerBalance(id, '1.00');
+  });
+
+  it('waits for an account lock before posting', async () => {
+    const id = await account();
+    const locker = await pool.connect();
+    await locker.query('BEGIN');
+    await locker.query('SELECT id FROM accounts WHERE id = $1 FOR UPDATE', [id]);
+    const pending = post(id, entry('credit', '1', 'lock-test')).then((result) => result);
+    try {
+      let waiting = false;
+      for (let i = 0; i < 100 && !waiting; i++) {
+        const result = await pool.query("SELECT 1 FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND query LIKE 'SELECT balance_minor FROM accounts%'");
+        waiting = (result.rowCount ?? 0) > 0;
+        if (!waiting) await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      expect(waiting).toBe(true);
+    } finally {
+      await locker.query('ROLLBACK');
+      locker.release();
+    }
+    expect((await pending).status).toBe(201);
+    await expectLedgerBalance(id, '1.00');
+  });
+
   it('serializes simultaneous identical posts', async () => {
     const id = await account();
     const body = entry('credit', '10', 'concurrent');
