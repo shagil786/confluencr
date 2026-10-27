@@ -11,7 +11,7 @@ export interface Balance {
   balance: string;
 }
 
-function formatBalance(minor: string): string {
+export function formatBalance(minor: string): string {
   const amount = BigInt(minor);
   return `${amount / 100n}.${(amount % 100n).toString().padStart(2, '0')}`;
 }
