@@ -3,7 +3,7 @@ import type { Pool } from 'pg';
 import { z } from 'zod';
 import { createAccount, getBalance } from './accounts.js';
 import { errorHandler, HttpError } from './errors.js';
-import { createTransactionHandler } from './transactions.js';
+import { createTransactionHandler, historyHandler } from './transactions.js';
 
 export function createApp(pool: Pool): Express {
   const app = express();
@@ -23,6 +23,7 @@ export function createApp(pool: Pool): Express {
     } catch (error) { next(error); }
   });
   app.post('/accounts/:id/transactions', createTransactionHandler(pool));
+  app.get('/accounts/:id/transactions', historyHandler(pool));
   app.use(errorHandler);
   return app;
 }

@@ -186,3 +186,72 @@ describe('transaction posting', () => {
     await expectLedgerBalance(id, '90071992547409.91');
   });
 });
+
+describe('transaction history', () => {
+  it('orders both types by timestamp and ID and filters with pagination metadata', async () => {
+    const id = await account();
+    const credit = await post(id, entry('credit', '10', 'first'));
+    const debit = await post(id, entry('debit', '2', 'second'));
+    const last = await post(id, entry('credit', '1', 'third'));
+    expect([credit.status, debit.status, last.status]).toEqual([201, 201, 201]);
+    await pool.query("UPDATE transactions SET created_at = CASE WHEN reference_id = 'first' THEN '2020-01-01'::timestamptz ELSE '2021-01-01'::timestamptz END WHERE account_id = $1", [id]);
+    const tied = [debit.body.id, last.body.id].sort().reverse();
+    const first = await request(app).get(`/accounts/${id}/transactions?page=1&limit=2`);
+    expect(first.status).toBe(200);
+    expect(first.body.data.map((row: { id: string }) => row.id)).toEqual(tied);
+    expect(first.body.pagination).toEqual({ page: 1, limit: 2, total_records: 3, total_pages: 2 });
+    const second = await request(app).get(`/accounts/${id}/transactions?page=2&limit=2`);
+    expect(second.body.data.map((row: { id: string }) => row.id)).toEqual([credit.body.id]);
+    expect(second.body.data[0]).toMatchObject({ account_id: id, type: 'credit', amount: '10.00', description: 'Test entry', reference_id: 'first' });
+    const credits = await request(app).get(`/accounts/${id}/transactions?type=credit`);
+    expect(credits.body.data.map((row: { id: string }) => row.id)).toEqual([last.body.id, credit.body.id]);
+    expect(credits.body.pagination).toEqual({ page: 1, limit: 20, total_records: 2, total_pages: 1 });
+    const debits = await request(app).get(`/accounts/${id}/transactions?type=debit`);
+    expect(debits.body.data.map((row: { id: string }) => row.id)).toEqual([debit.body.id]);
+    expect(debits.body.pagination.total_records).toBe(1);
+    const huge = await request(app).get(`/accounts/${id}/transactions?page=9007199254740991&limit=100`);
+    expect(huge.status).toBe(200);
+    expect(huge.body.data).toEqual([]);
+    const beyond = await request(app).get(`/accounts/${id}/transactions?page=3&limit=2`);
+    expect(beyond.body).toEqual({ data: [], pagination: { page: 3, limit: 2, total_records: 3, total_pages: 2 } });
+  });
+
+  it('returns empty history, distinguishes missing accounts, and validates queries', async () => {
+    const id = await account();
+    const empty = await request(app).get(`/accounts/${id}/transactions`);
+    expect(empty.body).toEqual({ data: [], pagination: { page: 1, limit: 20, total_records: 0, total_pages: 0 } });
+    expect((await request(app).get(`/accounts/${randomUUID()}/transactions`)).status).toBe(404);
+    expect((await request(app).get('/accounts/bad/transactions')).status).toBe(400);
+    for (const query of ['type=other', 'page=0', 'page=-1', 'page=1.5', 'page=abc', 'page=9007199254740992', 'limit=0', 'limit=101', 'limit=1.5', 'limit=', 'extra=x', 'page=1&page=2']) {
+      expect((await request(app).get(`/accounts/${id}/transactions?${query}`)).status, query).toBe(400);
+    }
+  });
+
+  it('uses the same snapshot for count and rows when a transaction commits between them', async () => {
+    const id = await account();
+    expect((await post(id, entry('credit', '1', 'before'))).status).toBe(201);
+    const historyPool = new Pool({ connectionString });
+    const realConnect = historyPool.connect.bind(historyPool);
+    historyPool.connect = (async () => {
+      const client = await realConnect();
+      const query = client.query.bind(client);
+      client.query = (async (...args: Parameters<typeof query>) => {
+        const result = await query(...args);
+        if (typeof args[0] === 'string' && /count\s*\(/i.test(args[0])) {
+          expect((await post(id, entry('credit', '1', 'during'))).status).toBe(201);
+        }
+        return result;
+      }) as typeof client.query;
+      return client;
+    }) as typeof historyPool.connect;
+    try {
+      const response = await request(createApp(historyPool)).get(`/accounts/${id}/transactions`);
+      expect(response.status).toBe(200);
+      expect(response.body.pagination.total_records).toBe(1);
+      expect(response.body.data.map((row: { reference_id: string }) => row.reference_id)).toEqual(['before']);
+      expect((await request(app).get(`/accounts/${id}/transactions`)).body.pagination.total_records).toBe(2);
+    } finally {
+      await historyPool.end();
+    }
+  });
+});
