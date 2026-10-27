@@ -39,10 +39,10 @@ npm test
 
 The test database name must end in `_test`. Tests apply the schema and delete only accounts and records they create. Use a dedicated database: tests create temporary triggers on the transactions table, so do not run them against shared or application data.
 
-Stop the Node server with Ctrl-C, then stop PostgreSQL without deleting its volume:
+Stop the Node server with Ctrl-C, then stop PostgreSQL without deleting its volume. Use the same project name chosen at startup (the example below uses `confluencr_ledger`):
 
 ```sh
-docker compose stop postgres
+docker compose -p confluencr_ledger stop postgres
 ```
 
 ## Try the core flow
