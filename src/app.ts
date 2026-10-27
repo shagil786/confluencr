@@ -11,7 +11,7 @@ export function createApp(pool: Pool): Express {
   app.use(express.json());
   app.post('/accounts', async (req, res, next) => {
     try {
-      const { name } = z.object({ name: z.string().trim().min(1) }).strict().parse(req.body);
+      const { name } = z.object({ name: z.string().trim().min(1).refine((value) => !value.includes('\0')) }).strict().parse(req.body);
       res.status(201).json(await createAccount(pool, name));
     } catch (error) { next(error); }
   });

@@ -14,8 +14,8 @@ export const transactionSchema = z.object({
     const minor = BigInt(whole) * 100n + BigInt(fraction.padEnd(2, '0'));
     return minor > 0n && minor <= maxMinor;
   }),
-  description: z.string().trim().min(1),
-  reference_id: z.string().trim().min(1),
+  description: z.string().trim().min(1).refine((value) => !value.includes('\0')),
+  reference_id: z.string().trim().min(1).refine((value) => !value.includes('\0') && Buffer.byteLength(value, 'utf8') <= 256),
 }).strict();
 
 export type TransactionInput = z.input<typeof transactionSchema>;

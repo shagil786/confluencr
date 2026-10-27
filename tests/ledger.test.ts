@@ -76,6 +76,26 @@ async function expectLedgerBalance(id: string, expected: string) {
   expect(`${minor / 100n}.${(minor % 100n).toString().padStart(2, '0')}`).toBe(expected);
 }
 
+describe('text validation', () => {
+  it('rejects null characters and oversized UTF-8 references without changing balances', async () => {
+    expect((await request(app).post('/accounts').send({ name: 'bad\u0000name' })).status).toBe(400);
+    const source = await account(), destination = await account();
+    const invalid = [
+      { ...entry('credit', '1', 'null-ref'), description: 'bad\u0000description' },
+      entry('credit', '1', 'bad\u0000reference'),
+      entry('credit', '1', 'é'.repeat(129)),
+    ];
+    for (const body of invalid) {
+      expect((await post(source, body)).status).toBe(400);
+      const { type: _type, ...shared } = body;
+      expect((await transferRequest({ ...shared, source_account_id: source, destination_account_id: destination })).status).toBe(400);
+    }
+    expect((await post(source, entry('credit', '1', 'é'.repeat(128)))).status).toBe(201);
+    await expectLedgerBalance(source, '1.00');
+    await expectLedgerBalance(destination, '0.00');
+  });
+});
+
 describe('transaction posting', () => {
   it('posts credits and debits atomically and rejects insufficient funds', async () => {
     const id = await account();
